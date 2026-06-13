@@ -17,6 +17,14 @@ class ExamRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"status": "ok"})
             return
 
+        # Check for /context/{user_id}
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "context":
+            user_id = parts[1]
+            items = context_store.list_for_user(user_id)
+            self._send_json(200, {"user_id": user_id, "context": items})
+            return
+
         if parsed.path == "/api/context":
             query = parse_qs(parsed.query)
             user_id = query.get("user_id", [""])[0]
@@ -47,7 +55,24 @@ class ExamRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "user_id and question are required"})
                 return
 
-            self._send_json(200, answer_question(user_id, question))
+            # 1. Recuperar contexto previo del usuario desde ContextStore
+            contexts = context_store.list_for_user(user_id)
+            context_keys = [c["key"] for c in contexts]
+
+            # 2. Generar respuesta base usando RAG (e incluir contexto en la consulta/respuesta)
+            response = answer_question(user_id, question)
+
+            # 3. Incluir el contexto para adaptar/enriquecer la respuesta final
+            if contexts:
+                instructions = " y ".join(str(c["value"]) for c in contexts)
+                response["answer"] = f"Adaptado a ({instructions}): {response['answer']}"
+                response["context_used"] = context_keys
+
+            # 4. Guardar la nueva interacción en ContextStore después de responder
+            context_store.save(user_id, "last_question", question)
+            context_store.save(user_id, "last_answer", response["answer"])
+
+            self._send_json(200, response)
             return
 
         if parsed.path == "/api/context":
@@ -71,6 +96,17 @@ class ExamRequestHandler(BaseHTTPRequestHandler):
 
         self._send_json(404, {"error": "not found"})
 
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) == 2 and parts[0] == "context":
+            user_id = parts[1]
+            context_store.clear(user_id)
+            self._send_json(200, {"status": "cleared", "user_id": user_id})
+            return
+
+        self._send_json(404, {"error": "not found"})
+
     def _read_json(self):
         length = int(self.headers.get("Content-Length", 0))
         if length == 0:
@@ -84,7 +120,7 @@ class ExamRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)

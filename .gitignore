@@ -40,4 +40,3 @@ Thumbs.db
 # Instructor-only files must stay outside the student repository
 generate_docx.py
 .atl/
-PROMPTS.md
