@@ -83,6 +83,51 @@ class CagContractTest(unittest.TestCase):
         self.assertIn("principiante", body["answer"].lower())
         self.assertIn("audience", body["context_used"])
 
+    def delete_json(self, path):
+        request = Request(
+            self.url(path),
+            method="DELETE",
+        )
+        try:
+            with urlopen(request, timeout=5) as response:
+                return response.status, json.loads(response.read().decode("utf-8"))
+        except HTTPError as error:
+            body = json.loads(error.read().decode("utf-8"))
+            error.close()
+            return error.code, body
+
+    def test_get_context_by_path_param(self):
+        self.post_json(
+            "/api/context",
+            {"user_id": "carlos", "key": "skill", "value": "python master"},
+        )
+
+        status, body = self.get_json("/context/carlos")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["user_id"], "carlos")
+        self.assertIn({"key": "skill", "value": "python master"}, body["context"])
+
+    def test_delete_context_by_path_param(self):
+        self.post_json(
+            "/api/context",
+            {"user_id": "carlos", "key": "skill", "value": "python master"},
+        )
+
+        # Confirm context exists
+        status, body = self.get_json("/context/carlos")
+        self.assertEqual(status, 200)
+        self.assertEqual(len(body["context"]), 1)
+
+        # Clear it
+        del_status, del_body = self.delete_json("/context/carlos")
+        self.assertEqual(del_status, 200)
+        self.assertEqual(del_body["status"], "cleared")
+
+        # Confirm it's empty
+        status_after, body_after = self.get_json("/context/carlos")
+        self.assertEqual(status_after, 200)
+        self.assertEqual(body_after["context"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
